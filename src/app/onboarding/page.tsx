@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, Field, Input, Select } from "@/components/ui";
+import { Button, Card, Field, Input, Label, Select } from "@/components/ui";
 import { localStore } from "@/lib/storage";
 import type {
   ActivityLevel,
@@ -42,42 +42,205 @@ const EQUIPMENT: { value: KitchenEquipment; label: string }[] = [
   { value: "instant_pot", label: "壓力鍋" },
 ];
 
-export default function OnboardingPage() {
-  const router = useRouter();
-  const existingProfile = typeof window !== "undefined" ? localStore.getProfile() : null;
-  const existingGoal = typeof window !== "undefined" ? localStore.getGoal() : null;
+const EIGHT_WEEKS_MS = 8 * 7 * 86_400_000;
 
-  const [profile, setProfile] = useState<Profile>(
-    existingProfile ?? {
-      sex: "male",
-      age: 30,
-      heightCm: 170,
-      activityLevel: "moderate",
-      restrictions: [],
-      equipment: ["stove", "rice_cooker"],
-      dislikedIngredients: [],
-    },
-  );
+function defaultProfile(id: "primary" | "partner", name: string): Profile {
+  return {
+    id,
+    name,
+    sex: "male",
+    age: 30,
+    heightCm: 170,
+    activityLevel: "moderate",
+    restrictions: [],
+    equipment: ["stove", "rice_cooker"],
+    dislikedIngredients: [],
+  };
+}
 
-  const [goal, setGoal] = useState<Goal>(
-    existingGoal ?? {
-      currentWeightKg: 70,
-      currentBodyFatPct: 22,
-      targetWeightKg: 65,
-      targetBodyFatPct: 18,
-      targetDate: new Date(Date.now() + 12 * 7 * 86_400_000).toISOString().slice(0, 10),
-      description: "",
-    },
-  );
+function defaultGoal(profileId: "primary" | "partner"): Goal {
+  return {
+    profileId,
+    currentWeightKg: 70,
+    currentBodyFatPct: 22,
+    targetWeightKg: 65,
+    targetBodyFatPct: 18,
+    targetDate: new Date(Date.now() + EIGHT_WEEKS_MS).toISOString().slice(0, 10),
+    description: "",
+    currentPhase: 0,
+    phaseWeeks: 4,
+  };
+}
 
+function ProfileForm({
+  title,
+  profile,
+  goal,
+  onChange,
+}: {
+  title: string;
+  profile: Profile;
+  goal: Goal;
+  onChange: (p: Profile, g: Goal) => void;
+}) {
   function toggle<T extends string>(arr: T[], v: T): T[] {
     return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
   }
 
+  function p(patch: Partial<Profile>) {
+    onChange({ ...profile, ...patch }, goal);
+  }
+  function g(patch: Partial<Goal>) {
+    onChange(profile, { ...goal, ...patch });
+  }
+
+  return (
+    <Card className="space-y-4">
+      <h2 className="font-semibold text-lg">{title}</h2>
+
+      <Field label="名稱 / 暱稱">
+        <Input value={profile.name} onChange={(e) => p({ name: e.target.value })} required />
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Field label="性別">
+          <Select value={profile.sex} onChange={(e) => p({ sex: e.target.value as Sex })}>
+            <option value="male">男性</option>
+            <option value="female">女性</option>
+          </Select>
+        </Field>
+        <Field label="年齡">
+          <Input type="number" min={13} max={100} value={profile.age}
+            onChange={(e) => p({ age: Number(e.target.value) })} required />
+        </Field>
+        <Field label="身高 (cm)">
+          <Input type="number" min={100} max={230} value={profile.heightCm}
+            onChange={(e) => p({ heightCm: Number(e.target.value) })} required />
+        </Field>
+      </div>
+
+      <Field label="活動量">
+        <Select value={profile.activityLevel}
+          onChange={(e) => p({ activityLevel: e.target.value as ActivityLevel })}>
+          {ACTIVITY_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </Select>
+      </Field>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="目前體重 (kg)">
+          <Input type="number" step="0.1" value={goal.currentWeightKg}
+            onChange={(e) => g({ currentWeightKg: Number(e.target.value) })} required />
+        </Field>
+        <Field label="目前體脂率 (%)">
+          <Input type="number" step="0.1" value={goal.currentBodyFatPct}
+            onChange={(e) => g({ currentBodyFatPct: Number(e.target.value) })} required />
+        </Field>
+        <Field label="目標體重 (kg)">
+          <Input type="number" step="0.1" value={goal.targetWeightKg}
+            onChange={(e) => g({ targetWeightKg: Number(e.target.value) })} required />
+        </Field>
+        <Field label="目標體脂率 (%)">
+          <Input type="number" step="0.1" value={goal.targetBodyFatPct}
+            onChange={(e) => g({ targetBodyFatPct: Number(e.target.value) })} required />
+        </Field>
+        <Field label="目標達成日期">
+          <Input type="date" value={goal.targetDate.slice(0, 10)}
+            onChange={(e) => g({ targetDate: e.target.value })} required />
+        </Field>
+        <Field label="體態描述（選填）" hint="例：腰圍 30 吋、體態緊實">
+          <Input value={goal.description ?? ""}
+            onChange={(e) => g({ description: e.target.value })} />
+        </Field>
+      </div>
+
+      <Field label="飲食限制 / 過敏">
+        <div className="flex flex-wrap gap-2 mt-1">
+          {RESTRICTIONS.map((r) => {
+            const active = profile.restrictions.includes(r.value);
+            return (
+              <button type="button" key={r.value}
+                onClick={() => p({ restrictions: toggle(profile.restrictions, r.value) })}
+                className={active
+                  ? "rounded-full bg-brand-600 px-3 py-1 text-sm text-white"
+                  : "rounded-full border border-gray-300 px-3 py-1 text-sm dark:border-gray-700"}>
+                {r.label}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      {profile.id === "primary" && (
+        <Field label="廚房設備（影響食譜建議）">
+          <div className="flex flex-wrap gap-2 mt-1">
+            {EQUIPMENT.map((eq) => {
+              const active = profile.equipment.includes(eq.value);
+              return (
+                <button type="button" key={eq.value}
+                  onClick={() => p({ equipment: toggle(profile.equipment, eq.value) })}
+                  className={active
+                    ? "rounded-full bg-brand-600 px-3 py-1 text-sm text-white"
+                    : "rounded-full border border-gray-300 px-3 py-1 text-sm dark:border-gray-700"}>
+                  {eq.label}
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+      )}
+
+      <Field label="不想吃的食材（逗號分隔）" hint="例：青椒, 苦瓜">
+        <Input
+          value={profile.dislikedIngredients.join(", ")}
+          onChange={(e) =>
+            p({
+              dislikedIngredients: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+            })
+          }
+        />
+      </Field>
+    </Card>
+  );
+}
+
+export default function OnboardingPage() {
+  const router = useRouter();
+
+  const [primaryProfile, setPrimaryProfile] = useState<Profile>(
+    () => localStore.getPrimaryProfile() ?? defaultProfile("primary", "我"),
+  );
+  const [primaryGoal, setPrimaryGoal] = useState<Goal>(
+    () => localStore.getPrimaryGoal() ?? defaultGoal("primary"),
+  );
+
+  const [hasPartner, setHasPartner] = useState(
+    () => localStore.getPartnerProfile() !== null,
+  );
+  const [partnerProfile, setPartnerProfile] = useState<Profile>(
+    () => localStore.getPartnerProfile() ?? defaultProfile("partner", "另一半"),
+  );
+  const [partnerGoal, setPartnerGoal] = useState<Goal>(
+    () => localStore.getPartnerGoal() ?? defaultGoal("partner"),
+  );
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    localStore.setProfile(profile);
-    localStore.setGoal({ ...goal, targetDate: new Date(goal.targetDate).toISOString() });
+    localStore.upsertProfile(primaryProfile);
+    localStore.upsertGoal({
+      ...primaryGoal,
+      targetDate: new Date(primaryGoal.targetDate).toISOString(),
+    });
+    if (hasPartner) {
+      localStore.upsertProfile(partnerProfile);
+      localStore.upsertGoal({
+        ...partnerGoal,
+        targetDate: new Date(partnerGoal.targetDate).toISOString(),
+      });
+    } else {
+      localStore.removePartner();
+    }
     router.push("/dashboard");
   }
 
@@ -85,189 +248,49 @@ export default function OnboardingPage() {
     <form onSubmit={handleSubmit} className="space-y-6">
       <h1 className="text-2xl font-bold">個人資料與目標</h1>
 
-      <Card className="space-y-4">
-        <h2 className="font-semibold">基本資料</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="性別">
-            <Select
-              value={profile.sex}
-              onChange={(e) => setProfile({ ...profile, sex: e.target.value as Sex })}
-            >
-              <option value="male">男性</option>
-              <option value="female">女性</option>
-            </Select>
-          </Field>
-          <Field label="年齡">
-            <Input
-              type="number"
-              min={13}
-              max={100}
-              value={profile.age}
-              onChange={(e) => setProfile({ ...profile, age: Number(e.target.value) })}
-              required
-            />
-          </Field>
-          <Field label="身高 (cm)">
-            <Input
-              type="number"
-              min={100}
-              max={230}
-              value={profile.heightCm}
-              onChange={(e) =>
-                setProfile({ ...profile, heightCm: Number(e.target.value) })
-              }
-              required
-            />
-          </Field>
-          <Field label="活動量">
-            <Select
-              value={profile.activityLevel}
-              onChange={(e) =>
-                setProfile({ ...profile, activityLevel: e.target.value as ActivityLevel })
-              }
-            >
-              {ACTIVITY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-      </Card>
+      <ProfileForm
+        title="主要使用者"
+        profile={primaryProfile}
+        goal={primaryGoal}
+        onChange={(p, g) => { setPrimaryProfile(p); setPrimaryGoal(g); }}
+      />
 
-      <Card className="space-y-4">
-        <h2 className="font-semibold">飲食限制與廚房設備</h2>
-        <Field label="飲食限制 / 過敏">
-          <div className="flex flex-wrap gap-2">
-            {RESTRICTIONS.map((r) => {
-              const active = profile.restrictions.includes(r.value);
-              return (
-                <button
-                  type="button"
-                  key={r.value}
-                  onClick={() =>
-                    setProfile({
-                      ...profile,
-                      restrictions: toggle(profile.restrictions, r.value),
-                    })
-                  }
-                  className={
-                    active
-                      ? "rounded-full bg-brand-600 px-3 py-1 text-sm text-white"
-                      : "rounded-full border border-gray-300 px-3 py-1 text-sm dark:border-gray-700"
-                  }
-                >
-                  {r.label}
-                </button>
-              );
-            })}
-          </div>
-        </Field>
-        <Field label="廚房設備（有打勾才會出現在食譜建議中）">
-          <div className="flex flex-wrap gap-2">
-            {EQUIPMENT.map((e) => {
-              const active = profile.equipment.includes(e.value);
-              return (
-                <button
-                  type="button"
-                  key={e.value}
-                  onClick={() =>
-                    setProfile({
-                      ...profile,
-                      equipment: toggle(profile.equipment, e.value),
-                    })
-                  }
-                  className={
-                    active
-                      ? "rounded-full bg-brand-600 px-3 py-1 text-sm text-white"
-                      : "rounded-full border border-gray-300 px-3 py-1 text-sm dark:border-gray-700"
-                  }
-                >
-                  {e.label}
-                </button>
-              );
-            })}
-          </div>
-        </Field>
-        <Field label="不想吃的食材（用逗號分隔）" hint="例：青椒, 苦瓜">
-          <Input
-            value={profile.dislikedIngredients.join(", ")}
-            onChange={(e) =>
-              setProfile({
-                ...profile,
-                dislikedIngredients: e.target.value
-                  .split(",")
-                  .map((s) => s.trim())
-                  .filter(Boolean),
-              })
-            }
+      {hasPartner ? (
+        <>
+          <ProfileForm
+            title="另一半 / 同伴"
+            profile={partnerProfile}
+            goal={partnerGoal}
+            onChange={(p, g) => { setPartnerProfile(p); setPartnerGoal(g); }}
           />
-        </Field>
-      </Card>
+          <button
+            type="button"
+            onClick={() => setHasPartner(false)}
+            className="text-sm text-rose-600 hover:underline"
+          >
+            移除同伴
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setHasPartner(true)}
+          className="text-sm text-brand-700 hover:underline"
+        >
+          + 加入另一半 / 同伴（合併菜單）
+        </button>
+      )}
 
-      <Card className="space-y-4">
-        <h2 className="font-semibold">目前狀況與目標</h2>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="目前體重 (kg)">
-            <Input
-              type="number"
-              step="0.1"
-              value={goal.currentWeightKg}
-              onChange={(e) =>
-                setGoal({ ...goal, currentWeightKg: Number(e.target.value) })
-              }
-              required
-            />
-          </Field>
-          <Field label="目前體脂率 (%)">
-            <Input
-              type="number"
-              step="0.1"
-              value={goal.currentBodyFatPct}
-              onChange={(e) =>
-                setGoal({ ...goal, currentBodyFatPct: Number(e.target.value) })
-              }
-              required
-            />
-          </Field>
-          <Field label="目標體重 (kg)">
-            <Input
-              type="number"
-              step="0.1"
-              value={goal.targetWeightKg}
-              onChange={(e) =>
-                setGoal({ ...goal, targetWeightKg: Number(e.target.value) })
-              }
-              required
-            />
-          </Field>
-          <Field label="目標體脂率 (%)">
-            <Input
-              type="number"
-              step="0.1"
-              value={goal.targetBodyFatPct}
-              onChange={(e) =>
-                setGoal({ ...goal, targetBodyFatPct: Number(e.target.value) })
-              }
-              required
-            />
-          </Field>
-          <Field label="目標達成日期">
-            <Input
-              type="date"
-              value={goal.targetDate.slice(0, 10)}
-              onChange={(e) => setGoal({ ...goal, targetDate: e.target.value })}
-              required
-            />
-          </Field>
-          <Field label="體態描述（自由填寫）" hint="例：腰圍 30 吋、體態緊實">
-            <Input
-              value={goal.description ?? ""}
-              onChange={(e) => setGoal({ ...goal, description: e.target.value })}
-            />
-          </Field>
-        </div>
+      <Card className="space-y-2">
+        <Label>週採購預算 (NT$)</Label>
+        <Input
+          type="number"
+          min={300}
+          max={10000}
+          defaultValue={localStore.getWeeklyBudget()}
+          onChange={(e) => localStore.setWeeklyBudget(Number(e.target.value))}
+        />
+        <p className="text-xs text-gray-500">此為全週食材成本（依實際使用克數）上限</p>
       </Card>
 
       <div className="flex justify-end">

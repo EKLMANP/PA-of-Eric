@@ -2,26 +2,30 @@ import { findIngredient } from "@/data/ingredients";
 import { RECIPES } from "@/data/recipes";
 import type {
   DietaryRestriction,
+  HouseholdTargets,
   KitchenEquipment,
   MealPlan,
   MealPlanEntry,
-  NutritionTargets,
   Profile,
   Recipe,
 } from "./types";
 
 export interface PlannerInput {
-  profile: Profile;
-  targets: NutritionTargets;
+  primaryProfile: Profile;
+  partnerProfile?: Profile;
+  targets: HouseholdTargets;
   weeklyBudgetTwd: number;
-  perMealBudgetTwd?: number;
-  numMeals?: number; // default 6
-  weekStart: string; // ISO date
+  numPeople: 1 | 2;
+  weekStart: string; // ISO date (Monday)
+  phaseIndex: number;
+  /** Recipe IDs used in the last phase — reduce repetition across phases */
+  recentRecipeIds?: string[];
   excludeRecipeIds?: string[];
 }
 
 export interface RecipeStats {
   recipe: Recipe;
+  /** Cost in TWD based on actual grams used (not Costco pack cost) */
   costTwd: number;
   calories: number;
   proteinG: number;
@@ -29,19 +33,17 @@ export interface RecipeStats {
   fatG: number;
 }
 
-export function statsForRecipe(recipe: Recipe): RecipeStats {
-  let cost = 0;
-  let cal = 0;
-  let prot = 0;
-  let carb = 0;
-  let fat = 0;
+export function statsForRecipe(recipe: Recipe, batchServings = 1): RecipeStats {
+  const scale = batchServings / recipe.servings;
+  let cost = 0, cal = 0, prot = 0, carb = 0, fat = 0;
   for (const ri of recipe.ingredients) {
     const ing = findIngredient(ri.ingredientId);
-    cost += ri.grams * ing.pricePerGram;
-    cal += (ri.grams / 100) * ing.caloriesPer100g;
-    prot += (ri.grams / 100) * ing.proteinPer100g;
-    carb += (ri.grams / 100) * ing.carbPer100g;
-    fat += (ri.grams / 100) * ing.fatPer100g;
+    const g = ri.grams * scale;
+    cost += g * ing.pricePerGram;
+    cal  += (g / 100) * ing.caloriesPer100g;
+    prot += (g / 100) * ing.proteinPer100g;
+    carb += (g / 100) * ing.carbPer100g;
+    fat  += (g / 100) * ing.fatPer100g;
   }
   return {
     recipe,
@@ -68,6 +70,24 @@ function hasRequiredEquipment(
   return recipe.equipment.every((e) => available.includes(e));
 }
 
+function mergedRestrictions(profiles: Profile[]): DietaryRestriction[] {
+  // Union: if any profile has a restriction, the household respects it
+  const set = new Set<DietaryRestriction>();
+  for (const p of profiles) for (const r of p.restrictions) set.add(r);
+  return [...set];
+}
+
+function mergedEquipment(profiles: Profile[]): KitchenEquipment[] {
+  // Intersection: only equipment available to both (use primary profile)
+  return profiles[0].equipment;
+}
+
+function mergedDisliked(profiles: Profile[]): string[] {
+  const set = new Set<string>();
+  for (const p of profiles) for (const d of p.dislikedIngredients) set.add(d);
+  return [...set];
+}
+
 function ingredientOverlap(a: Recipe, b: Recipe): number {
   const idsA = new Set(a.ingredients.map((i) => i.ingredientId));
   const idsB = new Set(b.ingredients.map((i) => i.ingredientId));
@@ -77,21 +97,41 @@ function ingredientOverlap(a: Recipe, b: Recipe): number {
 }
 
 /**
- * Greedy 6-meal selection: prefer recipes that
- * 1. fit restrictions and equipment
- * 2. are within per-meal budget
- * 3. share ingredients with already-selected meals (to minimize Costco waste)
- * 4. push the day's macro profile toward the protein target
+ * How many portions each recipe should batch-cook.
+ *
+ * Target: 2 people × 5 days × 2 meals = 20 person-meal servings per week.
+ * 6 recipe slots → ~3.3 servings each → round up to 4 per recipe.
+ */
+function batchServingsFor(numPeople: number, numRecipes = 6): number {
+  const targetPersonMeals = numPeople * 5 * 2; // 5 days × 2 meals
+  return Math.ceil(targetPersonMeals / numRecipes);
+}
+
+/**
+ * Select 6 diverse batch-friendly recipes for the week.
+ * Scoring: macro protein fit (50%) + ingredient overlap with already-selected (35%)
+ *          − repeat penalty from recent weeks (15%).
  */
 export function generateMealPlan(input: PlannerInput): MealPlan {
-  const numMeals = input.numMeals ?? 6;
+  const NUM_SLOTS = 6;
+  const numPeople = input.numPeople;
+  const profiles = input.partnerProfile
+    ? [input.primaryProfile, input.partnerProfile]
+    : [input.primaryProfile];
+
+  const restrictions = mergedRestrictions(profiles);
+  const equipment = mergedEquipment(profiles);
+  const disliked = mergedDisliked(profiles);
+
+  const batchServings = batchServingsFor(numPeople, NUM_SLOTS);
+
   const candidates = RECIPES.filter(
     (r) =>
       r.batchFriendly &&
       r.totalMinutes <= 30 &&
-      respectsRestrictions(r, input.profile.restrictions) &&
-      hasRequiredEquipment(r, input.profile.equipment) &&
-      !input.profile.dislikedIngredients.some((d) =>
+      respectsRestrictions(r, restrictions) &&
+      hasRequiredEquipment(r, equipment) &&
+      !disliked.some((d) =>
         r.ingredients.some((ri) => findIngredient(ri.ingredientId).name.includes(d)),
       ) &&
       !input.excludeRecipeIds?.includes(r.id),
@@ -103,36 +143,38 @@ export function generateMealPlan(input: PlannerInput): MealPlan {
     );
   }
 
-  const perMealBudget =
-    input.perMealBudgetTwd ?? Math.floor(input.weeklyBudgetTwd / numMeals);
+  // Weekly cost budget per recipe slot
+  const costPerSlot = input.weeklyBudgetTwd / NUM_SLOTS;
 
-  const stats = candidates.map(statsForRecipe);
-  const proteinTargetPerMeal = input.targets.proteinG / 3; // 6 meals ≈ 3 days × 2
+  const baseStats = candidates.map((r) => statsForRecipe(r, batchServings));
+  const proteinTargetPerSlot = input.targets.weeklyProteinG / NUM_SLOTS;
 
+  const recentSet = new Set(input.recentRecipeIds ?? []);
   const selected: RecipeStats[] = [];
   const usedCounts = new Map<string, number>();
 
-  for (let i = 0; i < numMeals; i++) {
-    const scored = stats
-      .filter((s) => s.costTwd <= perMealBudget * 1.15) // 15% buffer
+  for (let i = 0; i < NUM_SLOTS; i++) {
+    const withinBudget = baseStats.filter((s) => s.costTwd <= costPerSlot * 1.2);
+    const pool = withinBudget.length > 0 ? withinBudget : baseStats;
+
+    const scored = pool
       .map((s) => {
-        const proteinFit = 1 - Math.min(1, Math.abs(s.proteinG - proteinTargetPerMeal) / proteinTargetPerMeal);
+        const proteinFit =
+          1 - Math.min(1, Math.abs(s.proteinG - proteinTargetPerSlot) / proteinTargetPerSlot);
         const overlap = selected.length
           ? Math.max(...selected.map((sel) => ingredientOverlap(s.recipe, sel.recipe)))
           : 0;
-        const repeatPenalty = (usedCounts.get(s.recipe.id) ?? 0) * 0.35;
-        const score = proteinFit * 0.5 + overlap * 0.35 - repeatPenalty;
+        const currentWeekRepeat = (usedCounts.get(s.recipe.id) ?? 0) * 0.4;
+        const recentPhaseRepeat = recentSet.has(s.recipe.id) ? 0.2 : 0;
+        const score =
+          proteinFit * 0.5 +
+          overlap * 0.35 -
+          currentWeekRepeat -
+          recentPhaseRepeat;
         return { stats: s, score };
       })
       .sort((a, b) => b.score - a.score);
 
-    if (scored.length === 0) {
-      // budget too tight — relax
-      const fallback = [...stats].sort((a, b) => a.costTwd - b.costTwd)[0];
-      selected.push(fallback);
-      usedCounts.set(fallback.recipe.id, (usedCounts.get(fallback.recipe.id) ?? 0) + 1);
-      continue;
-    }
     const pick = scored[0].stats;
     selected.push(pick);
     usedCounts.set(pick.recipe.id, (usedCounts.get(pick.recipe.id) ?? 0) + 1);
@@ -140,14 +182,16 @@ export function generateMealPlan(input: PlannerInput): MealPlan {
 
   const entries: MealPlanEntry[] = selected.map((s) => ({
     recipeId: s.recipe.id,
-    servings: s.recipe.servings,
+    batchServings,
   }));
 
   return {
     weekStart: input.weekStart,
+    phaseIndex: input.phaseIndex,
     entries,
-    totalCostTwd: selected.reduce((sum, s) => sum + s.costTwd, 0),
-    totalCalories: selected.reduce((sum, s) => sum + s.calories, 0),
-    totalProteinG: selected.reduce((sum, s) => sum + s.proteinG, 0),
+    totalIngredientCostTwd: selected.reduce((sum, s) => sum + s.costTwd, 0),
+    totalCaloriesForWeek: selected.reduce((sum, s) => sum + s.calories, 0),
+    totalProteinGForWeek: selected.reduce((sum, s) => sum + s.proteinG, 0),
+    weeklyBudgetTwd: input.weeklyBudgetTwd,
   };
 }

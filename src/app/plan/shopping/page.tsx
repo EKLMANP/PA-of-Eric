@@ -17,7 +17,8 @@ export default function ShoppingPage() {
     return (
       <Card className="text-center space-y-3">
         <h2 className="font-semibold">尚未產生本週菜單</h2>
-        <Link href="/plan" className="inline-block rounded-lg bg-brand-600 px-4 py-2 text-white text-sm">
+        <Link href="/plan"
+          className="inline-block rounded-lg bg-brand-600 px-4 py-2 text-white text-sm">
           前往產生
         </Link>
       </Card>
@@ -32,20 +33,19 @@ export default function ShoppingPage() {
           <Button variant="secondary" onClick={() => window.print()}>
             列印 / PDF
           </Button>
-          <Link
-            href="/plan"
-            className="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700"
-          >
+          <Link href="/plan"
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700">
             返回菜單
           </Link>
         </div>
       </div>
 
       <Card>
-        <p className="text-sm text-gray-500">本週 ({plan.weekStart}) 採購總價</p>
+        <p className="text-sm text-gray-500">本週（{plan.weekStart}）Costco 採購總價</p>
         <p className="mt-1 text-3xl font-bold">NT$ {result!.totalCostTwd.toLocaleString()}</p>
         <p className="mt-1 text-xs text-gray-500">
-          已依 Costco 包裝規格向上取整；剩餘食材可冷藏 / 冷凍下週延用。
+          食材成本（依使用克數）：NT$ {plan.totalIngredientCostTwd.toLocaleString()} ·
+          差額為 Costco 大包裝的延用量，可冷凍備用。
         </p>
       </Card>
 
@@ -54,10 +54,10 @@ export default function ShoppingPage() {
           <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500 dark:bg-gray-800/60">
             <tr>
               <th className="px-4 py-2">食材</th>
-              <th className="px-4 py-2 text-right">需要</th>
+              <th className="px-4 py-2 text-right">需用量</th>
               <th className="px-4 py-2 text-right">買幾包</th>
               <th className="px-4 py-2 text-right">小計</th>
-              <th className="px-4 py-2 text-right">剩餘</th>
+              <th className="px-4 py-2 text-right">剩餘可留用</th>
             </tr>
           </thead>
           <tbody>
@@ -66,16 +66,16 @@ export default function ShoppingPage() {
                 <td className="px-4 py-3">
                   <div className="font-medium">{item.name}</div>
                   {item.freezable && (
-                    <div className="text-xs text-gray-500">可冷凍</div>
+                    <div className="text-xs text-gray-400">可冷凍延用</div>
                   )}
                 </td>
-                <td className="px-4 py-3 text-right">{item.totalGramsNeeded} g</td>
-                <td className="px-4 py-3 text-right">{item.packsToBuy}</td>
+                <td className="px-4 py-3 text-right">{item.totalGramsNeeded.toLocaleString()} g</td>
+                <td className="px-4 py-3 text-right font-medium">{item.packsToBuy}</td>
                 <td className="px-4 py-3 text-right font-medium">
                   NT$ {item.estimatedCostTwd.toLocaleString()}
                 </td>
                 <td className="px-4 py-3 text-right text-xs text-gray-500">
-                  {item.leftoverGrams} g
+                  {item.leftoverGrams.toLocaleString()} g
                 </td>
               </tr>
             ))}
