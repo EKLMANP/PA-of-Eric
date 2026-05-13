@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+import { pullFromSupabase, pushToSupabase } from "@/lib/supabase/sync";
 import { cn } from "@/lib/cn";
 
 const NAV = [
@@ -16,6 +20,45 @@ const NAV = [
 
 export function Nav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const supabase = createSupabaseBrowserClient();
+
+  useEffect(() => {
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(data.session?.user ?? null);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        const currentUser = session?.user ?? null;
+        setUser(currentUser);
+
+        if (event === "SIGNED_IN" && currentUser) {
+          setSyncing(true);
+          try {
+            await pullFromSupabase(supabase);
+            await pushToSupabase(supabase);
+          } finally {
+            setSyncing(false);
+          }
+        }
+      },
+    );
+
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  async function handleSignOut() {
+    if (!supabase) return;
+    await supabase.auth.signOut();
+    setUser(null);
+    router.push("/");
+  }
+
   return (
     <nav className="no-print sticky top-0 z-40 border-b border-gray-200 bg-white/80 backdrop-blur dark:border-gray-800 dark:bg-gray-900/80">
       <div className="mx-auto max-w-5xl px-4 py-3">
@@ -38,6 +81,39 @@ export function Nav() {
               {item.label}
             </Link>
           ))}
+
+          <div className="ml-auto flex items-center gap-2">
+            {syncing && (
+              <span className="text-xs text-gray-400 animate-pulse">同步中…</span>
+            )}
+            {supabase ? (
+              user ? (
+                <>
+                  <span className="hidden sm:block text-xs text-gray-500 truncate max-w-[140px]">
+                    {user.email}
+                  </span>
+                  <button
+                    onClick={handleSignOut}
+                    className="rounded-md px-2.5 py-1.5 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 transition"
+                  >
+                    登出
+                  </button>
+                </>
+              ) : (
+                <Link
+                  href="/login"
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-sm transition",
+                    pathname === "/login"
+                      ? "bg-brand-100 text-brand-700 dark:bg-brand-700/30 dark:text-brand-100"
+                      : "text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800",
+                  )}
+                >
+                  登入
+                </Link>
+              )
+            ) : null}
+          </div>
         </div>
       </div>
     </nav>
