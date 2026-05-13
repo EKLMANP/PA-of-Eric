@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ResponsiveContainer,
+} from "recharts";
 import { Button, Card, Field, Input, Select } from "@/components/ui";
 import { localStore } from "@/lib/storage";
 import { checkProgressFeedback } from "@/lib/feedback";
@@ -23,16 +27,14 @@ export default function ProgressPage() {
     setLogs(allLogs);
     setHasPartner(localStore.getPartnerProfile() !== null);
     const primaryGoal = localStore.getPrimaryGoal();
-    const primaryTargets = localStore.getPrimaryProfile();
-    if (primaryGoal && primaryTargets) {
-      // compute expected weekly delta from stored data
+    if (primaryGoal) {
       const today = new Date();
       const weeks = Math.max(
         1,
-        (new Date(primaryGoal.targetDate).getTime() - today.getTime()) /
-          (7 * 86_400_000),
+        (new Date(primaryGoal.targetDate).getTime() - today.getTime()) / (7 * 86_400_000),
       );
-      const expectedWeekly = (primaryGoal.targetWeightKg - primaryGoal.currentWeightKg) / weeks;
+      const expectedWeekly =
+        (primaryGoal.targetWeightKg - primaryGoal.currentWeightKg) / weeks;
       setAdjustment(checkProgressFeedback(allLogs, primaryGoal, expectedWeekly));
     }
   }
@@ -40,7 +42,7 @@ export default function ProgressPage() {
   useEffect(() => {
     reload();
     setForm((f) => ({ ...f, weightKg: localStore.getPrimaryGoal()?.currentWeightKg ?? 70 }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function add(e: React.FormEvent) {
@@ -63,6 +65,19 @@ export default function ProgressPage() {
   const prev = primaryLogs[primaryLogs.length - 2];
   const weekDelta = last && prev ? last.weightKg - prev.weightKg : null;
 
+  // Chart data: merge primary + partner by date
+  const chartData = [...new Set(logs.map((l) => l.date))].sort().map((date) => {
+    const p = primaryLogs.find((l) => l.date === date);
+    const pt = partnerLogs.find((l) => l.date === date);
+    return {
+      date: date.slice(5), // MM-DD
+      我_體重: p?.weightKg,
+      我_體脂: p?.bodyFatPct,
+      同伴_體重: pt?.weightKg,
+      同伴_體脂: pt?.bodyFatPct,
+    };
+  });
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">進度追蹤</h1>
@@ -74,6 +89,7 @@ export default function ProgressPage() {
         </Card>
       )}
 
+      {/* Input form */}
       <Card>
         <form className="grid gap-3 sm:grid-cols-5 items-end" onSubmit={add}>
           <Field label="日期">
@@ -83,7 +99,8 @@ export default function ProgressPage() {
           {hasPartner && (
             <Field label="誰">
               <Select value={form.profileId}
-                onChange={(e) => setForm({ ...form, profileId: e.target.value as "primary" | "partner" })}>
+                onChange={(e) =>
+                  setForm({ ...form, profileId: e.target.value as "primary" | "partner" })}>
                 <option value="primary">我</option>
                 <option value="partner">另一半</option>
               </Select>
@@ -101,6 +118,7 @@ export default function ProgressPage() {
         </form>
       </Card>
 
+      {/* Summary cards */}
       {last && (
         <div className="grid gap-3 sm:grid-cols-3">
           <Card>
@@ -115,11 +133,60 @@ export default function ProgressPage() {
           </Card>
           <Card>
             <p className="text-sm text-gray-500">與上次差距</p>
-            <p className="mt-1 text-2xl font-bold">
-              {weekDelta === null ? "—" : `${weekDelta > 0 ? "+" : ""}${weekDelta.toFixed(1)} kg`}
+            <p className={`mt-1 text-2xl font-bold ${
+              weekDelta !== null
+                ? weekDelta < 0 ? "text-emerald-600" : weekDelta > 0 ? "text-rose-500" : ""
+                : ""}`}>
+              {weekDelta === null
+                ? "—"
+                : `${weekDelta > 0 ? "+" : ""}${weekDelta.toFixed(1)} kg`}
             </p>
           </Card>
         </div>
+      )}
+
+      {/* Weight chart */}
+      {chartData.length >= 2 && (
+        <Card>
+          <h2 className="font-semibold mb-4">體重趨勢</h2>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} />
+              <Tooltip />
+              <Legend />
+              <Line type="monotone" dataKey="我_體重" stroke="#22c55e" strokeWidth={2}
+                dot={{ r: 3 }} connectNulls />
+              {hasPartner && (
+                <Line type="monotone" dataKey="同伴_體重" stroke="#3b82f6" strokeWidth={2}
+                  dot={{ r: 3 }} connectNulls />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
+
+      {/* Body fat chart */}
+      {chartData.some((d) => d.我_體脂 != null) && (
+        <Card>
+          <h2 className="font-semibold mb-4">體脂率趨勢</h2>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={chartData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-gray-200 dark:stroke-gray-700" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} unit="%" domain={["auto", "auto"]} />
+              <Tooltip formatter={(v: number) => `${v} %`} />
+              <Legend />
+              <Line type="monotone" dataKey="我_體脂" stroke="#f59e0b" strokeWidth={2}
+                dot={{ r: 3 }} connectNulls />
+              {hasPartner && (
+                <Line type="monotone" dataKey="同伴_體脂" stroke="#8b5cf6" strokeWidth={2}
+                  dot={{ r: 3 }} connectNulls />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </Card>
       )}
 
       <LogTable title="主要使用者記錄" rows={primaryLogs} />
@@ -146,13 +213,12 @@ function LogTable({ title, rows }: { title: string; rows: ProgressLog[] }) {
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={4} className="px-4 py-6 text-center text-gray-500">
-                尚無紀錄
-              </td>
+              <td colSpan={4} className="px-4 py-6 text-center text-gray-500">尚無紀錄</td>
             </tr>
           ) : (
             [...rows].reverse().map((l) => (
-              <tr key={`${l.date}-${l.profileId}`} className="border-t border-gray-100 dark:border-gray-800">
+              <tr key={`${l.date}-${l.profileId}`}
+                className="border-t border-gray-100 dark:border-gray-800">
                 <td className="px-4 py-3">{l.date}</td>
                 <td className="px-4 py-3 text-right">{l.weightKg} kg</td>
                 <td className="px-4 py-3 text-right">{l.bodyFatPct ?? "—"}</td>
